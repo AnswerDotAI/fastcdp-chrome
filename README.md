@@ -1,6 +1,6 @@
 # solveit-chrome
 
-Chrome extension that bridges [Solveit](https://solveit.fast.ai)'s Python backend with your browser — file system access, CDP automation, and real-time event streaming.
+Chrome extension that bridges [Solveit](https://solve.it.com)'s Python backend with your browser — file system access, CDP automation, and real-time event streaming.
 
 ## Installation
 
@@ -8,9 +8,9 @@ Chrome extension that bridges [Solveit](https://solveit.fast.ai)'s Python backen
 2. Open `chrome://extensions` in Chrome
 3. Toggle **Developer mode** (top right)
 4. Click **Load unpacked** and select this directory
-5. The extension icon should appear — it runs automatically on `localhost`
+5. The extension icon should appear — it runs automatically on `solve.it.com`
 
-The extension injects into pages served from `localhost` (where Solveit runs). No configuration needed.
+The extension injects into pages served from `solve.it.com`. No configuration needed.
 
 ## Architecture
 
