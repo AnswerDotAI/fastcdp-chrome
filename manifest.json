@@ -7,13 +7,14 @@
   "background": {"service_worker": "background.js"},
   "content_scripts": [
     {
-      "matches": ["http://localhost:*/*"],
+      "matches": ["http://localhost:*/*", "https://*.solve.it.com/*"],
       "js": ["idb-keyval-6.2.2-umd.min.js", "content.js"],
       "world": "MAIN"
     },
     {
-      "matches": ["http://localhost:*/*"],
+      "matches": ["http://localhost:*/*", "https://*.solve.it.com/*"],
       "js": ["bridge.js"]
     }
-  ]
+  ],
+  "host_permissions": ["http://localhost:*/*", "https://*.solve.it.com/*"]
 }
