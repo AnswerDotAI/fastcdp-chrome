@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "SolveIt Connector",
+  "name": "fastcdp",
   "version": "1.1",
-  "description": "Connect SolveIt with Chrome",
-  "permissions": ["activeTab", "storage", "debugger", "tabs"],
+  "description": "Drive Chrome via CDP, from fastcdp kernels or Solveit; plus Solveit file-system access",
+  "permissions": ["storage", "debugger", "tabs", "alarms"],
+  "options_ui": {"page": "options.html"},
   "background": {"service_worker": "background.js"},
   "content_scripts": [
     {
@@ -16,5 +17,5 @@
       "js": ["bridge.js"]
     }
   ],
-  "host_permissions": ["http://localhost:*/*", "https://*.solve.it.com/*"]
+  "host_permissions": ["http://127.0.0.1:*/*", "http://localhost:*/*", "https://*.solve.it.com/*"]
 }

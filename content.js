@@ -1,3 +1,4 @@
+(() => {
 let dirHandle = null;
 const { get, set, del } = window.idbKeyval;
 
@@ -26,14 +27,6 @@ async function resolveDir(path) {
 function reply(e, result) { window.pushData(e.detail.idx, {result}) }
 function replyErr(e, err) { window.pushData(e.detail.idx, {error: err.message}) }
 
-const eventSeqs = {};
-window.addEventListener('message', e => {
-  if (e.data?.type !== 'cdp-event') return;
-  const {subId, method, params} = e.data;
-  eventSeqs[subId] = (eventSeqs[subId] || 0) + 1;
-  window.pushData(`${subId}:${eventSeqs[subId]}`, {method, params});
-});
-
 async function pickDirectory(e) {
   const btn = Object.assign(document.createElement('button'), {
     id: 'solveitconn_dirbtn', textContent: 'Select Directory',
@@ -51,17 +44,6 @@ async function pickDirectory(e) {
   document.body.appendChild(btn);
 }
 
-function bridgeCall(type, data) {
-  const id = crypto.randomUUID()
-  return new Promise(resolve => {
-    const h = e => {
-      if (e.data?.type === 'cdp-bridge-res' && e.data.id === id) { window.removeEventListener('message', h); resolve(e.data.result) }
-    }
-    window.addEventListener('message', h)
-    window.postMessage({type: 'cdp-bridge-req', id, action: type, ...data}, '*')
-  })
-}
-
 const handlers = {
   'ext-ping': () => 'pong',
   'ext-get-url': () => window.location.href,
@@ -76,13 +58,6 @@ const handlers = {
     return (await (await h.getFileHandle(fname)).getFile()).text();
   },
   'ext-forget-directory': async () => { await del('solveit-directory'); dirHandle = null; return 'Directory forgotten'; },
-  'cdp-new-tab': async (e) => bridgeCall('new-tab', {url: e.detail.url}),
-  'cdp-attach': async (e) => bridgeCall('attach', {tabId: e.detail.tabId, targetId: e.detail.targetId}),
-  'cdp-get-targets': async () => bridgeCall('get-targets', {}),
-  'cdp-send': async (e) => bridgeCall('send', {tabId: e.detail.tabId, targetId: e.detail.targetId, method: e.detail.method, params: e.detail.params}),
-  'cdp-detach': async (e) => bridgeCall('detach', {tabId: e.detail.tabId, targetId: e.detail.targetId}),
-  'cdp-subscribe': async (e) => bridgeCall('subscribe', {tabId: e.detail.tabId, targetId: e.detail.targetId, subId: e.detail.subId, events: e.detail.events}),
-  'cdp-unsubscribe': async (e) => bridgeCall('unsubscribe', {tabId: e.detail.tabId, targetId: e.detail.targetId, subId: e.detail.subId}),
 };
 
 for (const [evt, handler] of Object.entries(handlers)) {
@@ -94,4 +69,4 @@ for (const [evt, handler] of Object.entries(handlers)) {
 }
 
 ensureDir();
-
+})()
