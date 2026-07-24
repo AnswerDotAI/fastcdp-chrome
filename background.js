@@ -10,19 +10,26 @@ function log(...args) { if (DEBUG) console.log('background.js:', ...args) }
 function debuggee(req) { return req.tabId ? {tabId: req.tabId} : {targetId: req.targetId} }
 function debuggeeKey(req) { return req.tabId || req.targetId }
 
-async function handle(req) {
+async function handle(req, ws) {
   if (req.method) return await chrome.debugger.sendCommand(debuggee(req), req.method, req.params || undefined)
   if (req.action === 'new-tab') {
     const tab = await chrome.tabs.create({url: 'about:blank', active: !!req.active})
     await chrome.debugger.attach({tabId: tab.id}, '1.3')
     attached.add(tab.id)
+    ws.attached.add(tab.id)
     if (req.url && req.url !== 'about:blank') await chrome.debugger.sendCommand({tabId: tab.id}, 'Page.navigate', {url: req.url})
     return {tabId: tab.id}
   }
   if (req.action === 'attach') {
-    await chrome.debugger.attach(debuggee(req), '1.3')
+    if (!attached.has(debuggeeKey(req))) await chrome.debugger.attach(debuggee(req), '1.3')
     attached.add(debuggeeKey(req))
+    ws.attached.add(debuggeeKey(req))
     return {tabId: req.tabId}
+  }
+  if (req.action === 'active-tab') {
+    const [tab] = await chrome.tabs.query({active: true, lastFocusedWindow: true})
+    if (!tab) throw new Error('no focused tab')
+    return {tabId: tab.id}
   }
   if (req.action === 'get-targets') return await chrome.debugger.getTargets()
   if (req.action === 'detach') {
@@ -41,13 +48,22 @@ async function handle(req) {
 function sendTo(ws, msg) { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)) }
 function broadcast(msg) { for (const p of peers) sendTo(p, msg) }
 
-// Speak the frame protocol on one socket: execute request frames, reply to their sender
+// Speak the frame protocol on one socket: execute request frames, reply to their sender.
+// Tabs a peer attached are detached when it goes away, so no debugger banners outlive a client.
 function wirePeer(ws) {
+  ws.attached = new Set()
+  ws.addEventListener('close', () => {
+    for (const id of ws.attached) {
+      if (!attached.has(id)) continue
+      attached.delete(id)
+      chrome.debugger.detach(typeof id === 'number' ? {tabId: id} : {targetId: id}).catch(() => {})
+    }
+  })
   ws.onmessage = async e => {
     const req = JSON.parse(e.data)
     log('got', req)
     if (!req.id) return
-    try { sendTo(ws, {id: req.id, result: await handle(req)}) }
+    try { sendTo(ws, {id: req.id, result: await handle(req, ws)}) }
     catch (err) { sendTo(ws, {id: req.id, error: err.message}) }
   }
   return ws
