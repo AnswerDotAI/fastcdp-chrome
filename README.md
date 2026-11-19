@@ -13,16 +13,16 @@ Chrome extension that lets [fastcdp](https://github.com/AnswerDotAI/fastcdp) dri
 The extension finds its peers two ways, both zero-config:
 
 - **Local kernels**: it checks `http://127.0.0.1:34654` every few seconds with a quiet HTTP probe, and connects to any fastcdp listener there, such as `ExtCDP.listen()`. Override via the service worker console: `chrome.storage.local.set({localPorts: [34654], localToken: 's3cret'})` (the token, if set, must match the one passed to `ExtCDP.listen`).
-- **Solveit relays**: when you open a solveit page, the extension learns the server's address from it and dials its `/wsx?chan=cdp` relay channel. Each origin announced since the worker started gets its own connection (so a localhost solveit and a solve.it.com instance can both be driven), dead origins are retried with quiet HTTP probes rather than failed websocket dials, and the most recently connected origin is redialed after a worker restart.
+- **Solveit relays**: each open solveit page connects to the service worker, and the first page from each solveit server opens that server's `/wsx?chan=cdp` relay websocket. On hosted solveit, `/wsx` accepts a browser websocket only if it carries the `_solveit` session cookie. Chrome sends that cookie when a solveit page opens the websocket, but not when the service worker does. The service worker turns away other pages from the same server, and those pages retry every 3 seconds. When the first page closes, the next page to retry takes over the relay. A localhost solveit and a solve.it.com instance can be driven at the same time, each through its own relay. The relay doesn't run on the `solve.it.com` dashboard.
 
-Either mode can be switched off from the extension's options page (right-click the icon, Options); disabling drops the relevant connections immediately, re-enabling reconnects within a few seconds.
+Either mode can be switched off from the extension's options page (right-click the icon, Options). Re-enabling a mode reconnects within a few seconds. Disabling local kernels closes their connections immediately. Disabling Solveit relays stops new relays from opening, but a relay that is already open stays open until its page closes or reloads.
 
 ## Architecture
 
 Three scripts:
 
-- **background.js** (service worker) owns everything CDP. It holds websockets to any number of peers (solveit relays plus local kernels), executes incoming frames with `chrome.debugger` and `chrome.tabs`, replies to the frame's sender, and broadcasts every debugger event to all peers. Both peer kinds are (re)connected by a 3s probe sweep, pings go out every 20s, the probes' own API calls keep the worker alive, and a `chrome.alarms` wake recovers it if Chrome force-kills it.
-- **bridge.js** (isolated world) tells the service worker which solveit origin to connect to, on each solveit page load.
+- **background.js** (service worker) owns everything CDP. It connects to local kernels over websockets, and to Solveit relays over `chrome.runtime` ports from the pages that hold the relay websockets. It executes incoming frames with `chrome.debugger` and `chrome.tabs`, replies to the frame's sender, and broadcasts every debugger event to all peers. A 3s probe sweep (re)connects local kernels, and pings go out every 20s. The probes' own API calls keep the worker alive, and a `chrome.alarms` wake recovers it if Chrome force-kills it.
+- **bridge.js** (isolated world) opens a Solveit relay websocket when the service worker accepts its page, and passes frames between the websocket and the service worker over a `chrome.runtime` port. It reconnects 3s after the websocket or the port closes.
 - **content.js** (MAIN world) handles file system access: it listens for CustomEvents on `document.body` and replies through `window.pushData`.
 
 ## CDP frame protocol
@@ -74,7 +74,7 @@ The selected directory handle is persisted in IndexedDB, so it survives page rel
 
 ## Permissions
 
-- **storage** — persist directory handles, the solveit origin, and local port/token config
+- **storage** — persist the options-page toggles and the local port/token config
 - **debugger** — Chrome DevTools Protocol access for CDP features
 - **tabs** — create and manage tabs for CDP automation
 - **alarms** — periodically wake the service worker to probe for local kernels

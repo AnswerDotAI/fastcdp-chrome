@@ -14,7 +14,8 @@
     },
     {
       "matches": ["http://localhost:*/*", "https://*.solve.it.com/*"],
-      "js": ["bridge.js"]
+      "js": ["bridge.js"],
+      "exclude_matches": ["https://solve.it.com/*"]
     }
   ],
   "host_permissions": ["http://127.0.0.1:*/*", "http://localhost:*/*", "https://*.solve.it.com/*"]
