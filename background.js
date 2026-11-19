@@ -1,7 +1,6 @@
 const DEBUG = false
 const attached = new Set()
 const peers = new Set()                    // every open socket: solveit relays plus any local kernels
-const relays = new Map(), relayOrigins = new Set()  // origin -> socket; origins announced this session
 const LOCAL_PORTS = [34654]
 const locals = new Map()                   // port -> socket (connecting or open)
 
@@ -70,8 +69,7 @@ function wirePeer(ws) {
 }
 
 // A refused WebSocket dial logs an unsuppressable console error, but a caught fetch doesn't: probe
-// any target with quiet HTTP first, and only dial sockets we know are listening. Non-2xx counts as
-// dead: a reverse proxy (solve.it.com's caddy) still answers 502 when the instance behind it is stopped.
+// any target with quiet HTTP first, and only dial sockets we know are listening. Non-2xx counts as dead.
 async function probeHttp(url, ms=2000) {
   try {
     const r = await fetch(url, {signal: AbortSignal.timeout(ms)})
@@ -79,42 +77,9 @@ async function probeHttp(url, ms=2000) {
   } catch { return null }
 }
 
-// -- Solveit relays: one connection per solveit origin announced this session, mirroring the local
-// kernels' per-port map, so e.g. a localhost solveit and a solve.it.com instance can both be driven.
-// Only the most recently connected origin is persisted, so a worker restart redials just that one.
-let relaysBusy = false
-async function probeRelays() {
-  if (relaysBusy) return   // a slow probe can outlive the interval tick; a second sweep would double-dial
-  relaysBusy = true
-  try {
-    if (!(await chrome.storage.local.get({solveitEnabled: true})).solveitEnabled) return
-    for (const origin of relayOrigins) {
-      if (relays.get(origin)?.readyState <= WebSocket.OPEN) continue
-      if (await probeHttp(origin) == null) continue
-      log('dialing relay', origin)
-      const ws = wirePeer(new WebSocket(origin.replace(/^http/, 'ws') + '/wsx?chan=cdp'))
-      relays.set(origin, ws)
-      ws.onopen = () => { peers.add(ws); chrome.storage.local.set({wsOrigin: origin}) }
-      ws.onclose = () => { peers.delete(ws); if (relays.get(origin) === ws) relays.delete(origin) }
-    }
-  } finally { relaysBusy = false }
-}
-
-chrome.storage.local.get('wsOrigin').then(r => { if (r.wsOrigin) { relayOrigins.add(r.wsOrigin); probeRelays() } })
-
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.type !== 'solveit-origin') return
-  relayOrigins.add(msg.origin)
-  probeRelays()
-})
-
 // React to the options-page toggles immediately: drop connections when disabled, redial when re-enabled
 chrome.storage.onChanged.addListener((ch, area) => {
   if (area !== 'local') return
-  if (ch.solveitEnabled) {
-    if (ch.solveitEnabled.newValue) probeRelays()
-    else for (const [o, ws] of relays) { ws.onclose = null; peers.delete(ws); ws.close(); relays.delete(o) }
-  }
   if (ch.localEnabled?.newValue === false) {
     for (const [port, ws] of locals) { ws.onclose = null; peers.delete(ws); ws.close(); locals.delete(port) }
   }
@@ -146,9 +111,8 @@ async function probeLocals() {
 // The probes' own extension-API calls reset the worker's 30s idle timer (Chrome 110+), so these
 // intervals keep it alive indefinitely; the alarm only recovers from force-kills (crash, update).
 setInterval(probeLocals, 3000)
-setInterval(probeRelays, 3000)
 chrome.alarms.create('probe', {periodInMinutes: 0.5})
-chrome.alarms.onAlarm.addListener(a => { if (a.name === 'probe') { probeLocals(); probeRelays() } })
+chrome.alarms.onAlarm.addListener(a => { if (a.name === 'probe') probeLocals() })
 probeLocals()
 
 // Keep the service worker alive while connected, and let peers see we're here
@@ -159,3 +123,26 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
 })
 
 chrome.debugger.onDetach.addListener((source) => { attached.delete(source.tabId || source.targetId) })
+
+// -- Solveit relays carried by tabs: the first solveit tab per origin carries that origin's /wsx socket,
+// so each command runs once. Other tabs are turned away and retry, taking over when the carrier closes.
+const carriers = new Map()   // origin -> the carrying tab's port
+
+chrome.runtime.onConnect.addListener(async port => {
+  if (port.name !== 'relay') return
+  const origin = new URL(port.sender.url).origin
+  if (carriers.has(origin)) return port.disconnect()
+  carriers.set(origin, port)
+  if (!(await chrome.storage.local.get({solveitEnabled: true})).solveitEnabled) { carriers.delete(origin); return port.disconnect() }
+  const closers = []
+  const peer = wirePeer({readyState: WebSocket.CONNECTING, send: data => port.postMessage({data}),
+    addEventListener: (ev, fn) => { if (ev === 'close') closers.push(fn) }})
+  port.onMessage.addListener(msg => {
+    if (msg.open) { peer.readyState = WebSocket.OPEN; peers.add(peer) }
+    else if (msg.data) peer.onmessage?.({data: msg.data})
+  })
+  port.onDisconnect.addListener(() => {
+    peer.readyState = WebSocket.CLOSED; peers.delete(peer); carriers.delete(origin); closers.forEach(f => f())
+  })
+  port.postMessage({dial: true})
+})
